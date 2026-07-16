@@ -1,91 +1,135 @@
 ---
 name: import-codebase
-description: Bring an existing codebase into CodeSpring. Use when the user already has an app (built by them, an agency, or a previous AI session) and wants to plan and control it in CodeSpring going forward. Triggers, "import my existing app", "map my current codebase", "I already have a project", "bring this into CodeSpring", "help me understand this code so I can plan it", "reverse engineer my app into features".
-version: 0.1
+description: Import an existing codebase into CodeSpring as a visual feature map — core features (sidebar/nav pages) with nested sub-features, a "how it works" note per feature, and generated Frontend + Backend PRDs attached as bridge nodes. Use when the user already has an app and wants CodeSpring to understand it so they can design new features without duplicating what exists. Triggers, "import my codebase into CodeSpring", "map my existing app", "reverse engineer my app into features", "bring this project into CodeSpring", "visualize my code in CodeSpring".
+version: 0.2
 ---
 
 # Import an existing codebase into CodeSpring
 
-The user already has a working (or half-working) app and wants to plan and control it in CodeSpring from now on. CodeSpring is a visual workspace where they map an app as feature nodes on a canvas, then generate PRDs the AI builds from. Right now their app exists only as code. Your job is to turn that code into a plain-English feature map the user can paste into CodeSpring as nodes, so their app and their plan finally match.
+The user has a working (or half-working) app and wants CodeSpring to hold an accurate, visual model of it: **core features → sub-features → notes → PRDs**, grounded in the real code. Once CodeSpring understands how the app is actually built (screens, API routes, data models, shared systems), the user can design new features on top of it without duplicating backend or re-building something that already exists.
 
-Do this carefully. The user is likely non-technical. Give them a map they understand, not a code dump.
+You do this by driving the CodeSpring CLI and API directly, so the map lands in their account automatically — not as a doc they paste by hand.
 
-## Step 1: Inventory the app
+---
 
-Explore the codebase and build a picture of what it actually does. Look for:
+## 0. Connect first (do this at the start of EVERY CodeSpring skill)
 
-- **Routes and screens.** What pages or views exist? What does the user see and do on each one? Check the router, the pages or app folder, and navigation.
-- **Features.** Group the screens into features. A feature is a thing the user can accomplish (sign in, create a project, send a message), not a file.
-- **Data models.** What does the app store? Look at the schema, models, migrations, or database calls. List each thing it saves and the main fields in plain words.
-- **Integrations.** Payments, email, auth, file storage, external APIs. Note each one and what it is for.
+1. **Authenticated?** Run `codespring auth status`. If it is not authenticated (or the token is expired), tell the user to run `codespring auth login` (browser OAuth) or `codespring auth login --api-key`, and STOP until they confirm. Running any CLI command also refreshes an expired OAuth token, so run `auth status` before reading the token file.
+2. **Project linked?** Run `codespring status`. If no project is linked, either link an existing one or create one:
+   ```bash
+   codespring projects                                   # find an existing project id
+   codespring init --project <projectId> --force         # link it
+   # or start fresh:
+   codespring project create --name "..." --description "..."   # returns <projectId>
+   codespring init --project <projectId> --force
+   ```
+3. **Use the LOCAL project, never the global one.** The linked project is in `<cwd>/.codespring/config.json`. The global `~/.codespring/config.json` points at whatever project was last used somewhere else. Any script that reads the global config will silently target the WRONG project. Always read the local `.codespring/config.json` (or hardcode the intended `projectId`) and print it before any write.
 
-Read enough to be accurate. You do not need to read every line, but do not guess at what a feature does. If you are unsure, open the file and check.
+Direct API calls (needed for PRDs, see §5) use base `https://server.codespring.app/api` with `Authorization: Bearer <accessToken>` (or `x-api-key: <apiKey>`) from `~/.codespring/credentials.json`.
 
-## Step 2: Produce a plain-English feature map
+---
 
-Write the user a map they can paste into CodeSpring as nodes. Structure it the way CodeSpring is structured, so it drops in cleanly:
+## 1. Definitions (get these right)
 
-- **Features** (top level, like folders on the canvas). One line each on what the feature does for the user.
-- **Sub-features** (the screens or actions inside a feature). One line each.
-- **Notes** for anything worth remembering (a quirk, a dependency, a "this is half-built").
-- A short **data** section listing what the app stores, in plain words.
+- **Core feature** = the highest-level unit of the app. In a webapp this is almost always a **sidebar / nav item = a page** (e.g. Dashboard, Projects, Billing, Settings). Read the sidebar/nav component first and take its items. If there is no sidebar, a core feature is the highest-level grouping a user recognizes as "a thing the app does."
+- **Sub-feature** = a feature *within* a core feature — a specialized capability that makes it work (e.g. under a "Projects" page: Create Project, Invite Teammate, Project Detail).
+- **Note** = a plain "how it works" description on a core feature's bridge. NOT a requirements doc.
+- **PRD** = a real Frontend or Backend requirement doc generated by CodeSpring, attached to the feature via a **PRD Bridge** node.
 
-Write it for a non-technical reader. "Users can reset their password by email" is good. Naming the controller class is not. Keep each line short so it becomes a clean node.
+Card descriptions stay SHORT (one sentence). All depth goes into the note and the PRDs.
 
-Example shape:
+---
 
+## 2. Analyze the codebase (read-only, be accurate)
+
+Everything downstream depends on this. Use read-only exploration (parallel sub-agents help). Build two maps:
+
+- **Frontend map** — for each core feature: route/page file, what the user sees, components rendered (with paths), reusable UI components, client interactions, and cross-feature navigation (what links to/from it).
+- **Backend map** — every API route (methods, external calls, auth) and **which features use it — flag any route used by more than one feature**; every server action / controller; the data model (tables, enums); shared utilities; env vars; and infra that is easy to miss (middleware, webhooks, async/polling jobs, cron/queues, storage buckets, request timeouts, hardcoded hosts, rate/credit logic, provider mismatches, orphan or misnamed routes).
+
+Set the tech stack to what the code ACTUALLY uses. Read enough to be correct; open the file rather than guess.
+
+---
+
+## 3. Build the map (CLI)
+
+```bash
+# Tech stack (id, title, description all required; description = category e.g. Frontend/Backend/Database)
+codespring mindmap tech-stack --replace --add '[{"id":"tech-next","title":"Next.js","description":"Frontend"}, ...]'
+
+# Core features (short descriptions). Returns createdFeatureIds — keep them.
+codespring mindmap features --add '[{"title":"Dashboard","description":"..."}, ...]'
+
+# Sub-features (one call each), parented to their core feature
+codespring feature create --parent <coreFeatureId> --title "Create Project" --description "..."
+
+# Enrich descriptions later
+codespring feature update <featureId> --description "..."
+
+# How-it-works NOTE — ONE per core feature (re-running OVERWRITES it; only ROOT feature ids are accepted)
+codespring mindmap note <coreFeatureId> --title "How it works — X" --text "$(cat note.txt)"
 ```
-Feature: Accounts
-  Sub-feature: Sign up with email
-  Sub-feature: Log in
-  Sub-feature: Reset password by email
-  Note: Passwords are handled by the auth library, not custom code.
 
-Feature: Projects
-  Sub-feature: Create a project
-  Sub-feature: Invite a teammate
-  Note: Invites work but there is no way to remove a teammate yet.
+Pass long `--text` via `"$(cat file)"` to avoid shell-quoting pain; command-substitution output is not re-expanded, so `$30` etc. survive. `mindmap note` echoes the whole (large) mindmap JSON — redirect it to `/dev/null`.
 
-Data the app stores:
-  - Users (name, email, plan)
-  - Projects (title, owner, created date)
+**Note content shape** (this doubles as PRD context, so make it strong): Overview · Frontend (route, what you see, components, reusable UI) · Backend (server actions, API routes incl. shared ones, data tables, external services, infra gotchas) · Sub-features (click → screen → backend) · Links to other features (mirror the link on BOTH features).
+
+---
+
+## 4. Pitfall: sub-features get FLATTENED into core features
+
+After some operations (PRD generation and/or creating a checkpoint can rebuild the features node), every sub-feature's `parentFeatureId` may reset to `null`, promoting all sub-features into the core list (`node-features` balloons while the sub-groups still exist). This is the "suddenly too many core features" bug.
+
+- **Detect:** fetch the mindmap and assert `node-features.items.length === <number of real core features>`. Check after PRD generation, checkpoints, and at the very end.
+- **Fix:** re-parent each stray sub-feature — `codespring feature update <subFeatureId> --parent <coreFeatureId>`. Keep a stored subFeatureId→coreFeatureId map so you can re-run this fast.
+
+---
+
+## 5. Generate + attach PRDs
+
+The CLI can only read/sync PRDs. Creation is an API call (the same one the web app uses). This is a current workaround because PRD creation is not yet a CLI command — put it in the skill so the agent can do it.
+
+**Minimal API helper** — write a tiny script that reads the token from `~/.codespring/credentials.json` and the `projectId` from the LOCAL `.codespring/config.json`, then calls `https://server.codespring.app/api<path>` with the Bearer/api-key header. Run `codespring auth status` first so the token is fresh.
+
+**5a. Generate** (creates the PRD record, AI-written from the feature + its note as context):
 ```
+POST /prds/generate   body: { projectId, bridgeNodeId, prdType }
+  bridgeNodeId = "bridge-feature-<featureId>"    (note the doubled "feature-feature" when featureId starts with "feature-")
+  prdType      = "frontend" | "backend" | "database"
+```
+It **streams (SSE), ~20–30s**. Use an HTTP timeout **≥ 120s** — a client abort does NOT stop the server, it finishes and creates the record anyway, so short timeout + retry = **duplicate PRDs**.
 
-## Step 3: Flag the risky and tangled areas
+**5b. Dedupe** (only if you created duplicates): `DELETE /prds/<id>` needs an active checkpoint, so first `POST /projects/<projectId>/checkpoints {message}`, then delete the shorter/duplicate ones (group by the PRD `name` field, e.g. "Frontend PRD: Dashboard" — the detail endpoint's `featureName` is unreliable).
 
-The user needs to know where changes are dangerous. Call out, in plain language:
+**5c. Attach as canvas nodes** — generation does NOT add nodes to the mindmap `flowJson`, so PRDs will not render until you add them and PUT the whole flowJson. Per core feature, add a `prdBridge` off the feature bridge, then a `prdFrontend` and/or `prdBackend` carrying the PRD record id:
+```
+node prdBridge    id: prdBridge-<bridgeNodeId>
+     data {title:"PRD Bridge", itemId:<featureId>, featureId:<featureId>, isCollapsed:false, generatingType:null, handlePosition:"left"}
+node prdFrontend  id: prdFrontend-<ts>-<rand>  data {prdId:<recordId>, title:"Frontend PRD", isCollapsed:false, isGenerating:false, handlePosition:"left"}
+node prdBackend   id: prdBackend-<ts>-<rand>   data {prdId:<recordId>, title:"Backend PRD",  isCollapsed:false, isGenerating:false, handlePosition:"left"}
+edge bridge    -> prdBridge   sourceHandle "<bridgeNodeId>-source-prd"        targetHandle "<prdBridgeId>-target-prd-bridge"
+edge prdBridge -> prdFrontend sourceHandle "<prdBridgeId>-source-prd-bridge"  targetHandle "<prdNodeId>-target-prd"
+edge prdBridge -> prdBackend  (same source handle as above)
+```
+Edges: `{type:"default", className:"stroke-foreground", style:{strokeWidth:2}}`. Position prdBridge right of the feature bridge, PRD nodes right of it. Persist with `PUT /mindmaps/project/<projectId>` body `{flowJson:{nodes, edges}}` — this REPLACES the whole flowJson, so fetch current, ADD to it, preserve everything else, and re-check §4 afterward.
 
-- **Tangled areas** where one feature is wired into many others, so changing it is likely to break something else.
-- **Fragile spots**, code that looks half-finished, has no error handling, or clearly was rewritten several times.
-- **Unclear areas** where you could not tell what the code is meant to do. Say so honestly instead of guessing.
-- **Duplication**, the same thing done two different ways in two places, which usually means a future change has to be made twice.
+> For rich, feature-by-feature PRDs (deep design + backend deep-dive), use the **create-prd** skill — it is the specialist for this step.
 
-Present these as a short "handle with care" list next to the feature map. This is exactly the kind of thing CodeSpring exists to make visible, so be direct about it.
+---
 
-## Step 4: From here on, work from CodeSpring PRDs
+## 6. Verify at the end (always)
+- `node-features.items.length === <number of core features>` (§4).
+- Sub-groups count == core count; total sub items == expected.
+- Each PRD you generated has real content (thousands of chars, not empty), one FE + one BE per feature you targeted.
+- Canvas: one `prdBridge` per targeted feature, each with a `prdFrontend`/`prdBackend` carrying a valid `prdId`.
+- Give the user their project link: `https://v2.codespring.app/project/<projectId>`.
 
-Once the user has their feature map in CodeSpring, they will make changes by generating PRDs there, the same as a new project. When they come back with a PRD for a change:
-
-- Build only what that PRD describes. Do not add features that are not asked for.
-- Follow the kanban task order if there is one (CodeSpring numbers tasks like 0.1.1, 0.1.2).
-- Respect the existing app. You are changing a living codebase, not starting fresh, so reuse what is there rather than rewriting it.
-
-## Step 5: Verify one feature at a time
-
-This is the whole reason the user came to CodeSpring: in the past, fixing one thing broke another. Do not repeat that. For every change:
-
-1. Make the smallest change the PRD asks for.
-2. Verify the feature you changed still works.
-3. Verify the features you flagged as connected to it in Step 3 still work too.
-4. Report what you changed, what you checked, and that it holds together.
-5. Then move to the next change.
-
-Never batch several risky changes into one untested pile. One feature, verified, before the next. If a change would force you to touch a tangled area you flagged, stop and tell the user before you do it, with your recommendation.
+## 7. Known limits (CLI 0.6.0)
+- Sub-features cannot own a note/bridge — `mindmap note` only accepts ROOT feature ids. Sub-feature detail + cross-links live in the parent feature's note.
+- PRDs can only be *generated* (AI) via `/prds/generate`, not created empty; `prd sync --file` can overwrite content afterward.
+- Spec / research / planning documents are not exposed to the CLI token — treat them as web-app-only.
 
 ## What good looks like
-
-- The user has a feature map in plain English that mirrors their real app, ready to paste as nodes.
-- They know which areas are risky before they change anything.
-- Changes come from CodeSpring PRDs, one feature at a time, each verified.
-- Fixing one thing no longer quietly breaks another.
-- The code and the CodeSpring plan finally tell the same story.
+- CodeSpring holds an accurate map of the real app: right core features, nested sub-features, honest notes.
+- Every targeted feature has a Frontend and/or Backend PRD attached to its bridge, grounded in the actual code.
+- New features can be designed on top without duplicating existing backend or shared API routes, because the map already shows what exists.

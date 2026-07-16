@@ -41,7 +41,8 @@ You can install more than one skill. Copy each folder you want.
 | Skill | What it does |
 |-------|--------------|
 | `getting-started` | Teaches your agent to start a brand-new app from your CodeSpring PRDs: read the plan, respect the feature list, build task by task in kanban order, and report progress so you can move cards. |
-| `import-codebase` | Teaches your agent to bring an existing app into CodeSpring: inventory what you already have into a plain-English feature map you can paste in as nodes, flag risky areas, then make changes from your CodeSpring plan one feature at a time. |
+| `import-codebase` | Teaches your agent to bring an existing app into CodeSpring: read the real code, build the feature map (core features, sub-features, notes) in your account, and generate Frontend + Backend PRDs attached to each feature — so CodeSpring understands your app and you can design new features without duplicating what exists. |
+| `create-prd` | A specialist for generating PRDs. It lists your core features, asks which one and whether you want a Frontend, Backend, or Both, deep-dives the real code (architecture, API routes, security for backend; design system, spacing, navigation for frontend), then generates the PRD(s) and attaches them to the feature on your canvas. |
 
 ## Updating
 
